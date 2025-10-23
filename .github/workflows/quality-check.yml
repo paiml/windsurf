@@ -1,0 +1,230 @@
+name: Quality Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate-structure:
+    runs-on: ubuntu-latest
+    name: Validate Course Structure
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate lab directory structure
+        run: |
+          echo "🔍 Validating lab structure..."
+
+          # Check Module 1 labs exist
+          for lab in lab01 lab02 lab03 lab04; do
+            if [ ! -d "labs/module1/$lab" ]; then
+              echo "❌ Missing labs/module1/$lab"
+              exit 1
+            fi
+            if [ ! -f "labs/module1/$lab/README.md" ]; then
+              echo "❌ Missing labs/module1/$lab/README.md"
+              exit 1
+            fi
+          done
+
+          # Check Module 2 labs exist
+          for lab in lab01 lab02 lab03 lab04; do
+            if [ ! -d "labs/module2/$lab" ]; then
+              echo "❌ Missing labs/module2/$lab"
+              exit 1
+            fi
+            if [ ! -f "labs/module2/$lab/README.md" ]; then
+              echo "❌ Missing labs/module2/$lab/README.md"
+              exit 1
+            fi
+          done
+
+          echo "✅ All lab directories and READMEs present"
+
+      - name: Validate required sections
+        run: |
+          echo "🔍 Checking for required sections in READMEs..."
+
+          # Check main README
+          if ! grep -q "## Overview" README.md; then
+            echo "❌ Main README missing Overview section"
+            exit 1
+          fi
+
+          if ! grep -q "## Learning Objectives" README.md; then
+            echo "❌ Main README missing Learning Objectives"
+            exit 1
+          fi
+
+          # Check lab READMEs have required sections
+          for readme in labs/module*/lab*/README.md; do
+            if ! grep -q "## Overview" "$readme"; then
+              echo "❌ $readme missing Overview section"
+              exit 1
+            fi
+            if ! grep -q "## Learning Objectives" "$readme"; then
+              echo "❌ $readme missing Learning Objectives"
+              exit 1
+            fi
+          done
+
+          echo "✅ All required sections present"
+
+  markdown-lint:
+    runs-on: ubuntu-latest
+    name: Markdown Linting
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Run markdownlint
+        run: |
+          echo "🔍 Linting markdown files..."
+          markdownlint '**/*.md' --ignore node_modules || true
+          echo "✅ Markdown lint complete"
+
+  content-quality:
+    runs-on: ubuntu-latest
+    name: Content Quality Checks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for broken internal links
+        run: |
+          echo "🔍 Checking for broken internal links..."
+
+          # Simple check for markdown links to files that don't exist
+          find . -name "*.md" -type f | while read -r file; do
+            # Extract markdown links: [text](path)
+            grep -oP '\]\(\K[^)]+' "$file" 2>/dev/null | while read -r link; do
+              # Skip external links
+              if [[ "$link" =~ ^https?:// ]] || [[ "$link" =~ ^mailto: ]]; then
+                continue
+              fi
+
+              # Skip anchors
+              if [[ "$link" =~ ^# ]]; then
+                continue
+              fi
+
+              # Check if file exists relative to the markdown file
+              dir=$(dirname "$file")
+              if [ ! -f "$dir/$link" ] && [ ! -d "$dir/$link" ]; then
+                echo "⚠️  Potential broken link in $file: $link"
+              fi
+            done
+          done
+
+          echo "✅ Link check complete"
+
+      - name: Verify documentation statistics
+        run: |
+          echo "📊 Documentation Statistics"
+          echo "============================"
+
+          total_lines=$(wc -l README.md labs/module*/lab*/README.md 2>/dev/null | tail -1 | awk '{print $1}')
+          total_words=$(wc -w README.md labs/module*/lab*/README.md 2>/dev/null | tail -1 | awk '{print $1}')
+          total_files=$(find . -name "*.md" -type f | wc -l)
+
+          echo "Total markdown files: $total_files"
+          echo "Total lines: $total_lines"
+          echo "Total words: $total_words"
+
+          # Quality thresholds
+          if [ "$total_lines" -lt 3000 ]; then
+            echo "❌ Documentation too short (< 3000 lines)"
+            exit 1
+          fi
+
+          if [ "$total_files" -lt 9 ]; then
+            echo "❌ Missing documentation files (< 9 files)"
+            exit 1
+          fi
+
+          echo "✅ Documentation meets quality thresholds"
+
+  security-check:
+    runs-on: ubuntu-latest
+    name: Security Checks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for secrets in documentation
+        run: |
+          echo "🔍 Scanning for potential secrets..."
+
+          # Check for common secret patterns in markdown
+          if grep -r -i "api[_-]key.*=.*['\"][a-zA-Z0-9]\{20,\}" . --include="*.md" 2>/dev/null; then
+            echo "⚠️  Potential API key found in documentation"
+          fi
+
+          if grep -r "password.*=.*['\"][^'\"]*['\"]" . --include="*.md" 2>/dev/null | grep -v "EXAMPLE\|PLACEHOLDER\|YOUR_" ; then
+            echo "⚠️  Potential password found in documentation"
+          fi
+
+          echo "✅ Security scan complete"
+
+  course-integrity:
+    runs-on: ubuntu-latest
+    name: Course Integrity Check
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify course title consistency
+        run: |
+          echo "🔍 Verifying course title..."
+
+          if ! grep -q "Windsurf for Privacy Conscious Development" README.md; then
+            echo "❌ Main README missing correct course title"
+            exit 1
+          fi
+
+          echo "✅ Course title verified"
+
+      - name: Verify author attribution
+        run: |
+          echo "🔍 Checking author attribution..."
+
+          if ! grep -q "Liam Parker" README.md; then
+            echo "❌ Missing author attribution"
+            exit 1
+          fi
+
+          if ! grep -q "paiml.com" README.md; then
+            echo "❌ Missing PAIML attribution"
+            exit 1
+          fi
+
+          echo "✅ Author attribution verified"
+
+      - name: Verify all 8 labs are documented
+        run: |
+          echo "🔍 Verifying all labs documented..."
+
+          lab_count=$(find labs/module*/lab* -name README.md | wc -l)
+
+          if [ "$lab_count" -ne 8 ]; then
+            echo "❌ Expected 8 labs, found $lab_count"
+            exit 1
+          fi
+
+          echo "✅ All 8 labs present"
